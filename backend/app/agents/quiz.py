@@ -58,6 +58,42 @@ class QuizResponse(BaseModel):
     questions: list[QuizQuestion] = Field(min_length=1, max_length=20)
 
 
+def _quiz_search_scope(request: str) -> tuple[str, str]:
+    """Separate a chat command from its topic and expand common resume terms."""
+    topic = re.sub(
+        r"^(?:(?:please\s+)?(?:create|make|generate|give(?:\s+me)?|start|take)\s+)?"
+        r"(?:me\s+)?(?:a\s+)?(?:quiz|mcq|multiple[- ]choice(?:\s+quiz)?)\b"
+        r"(?:\s+me)?(?:\s+(?:on|about|for|from|based\s+on))?\s*",
+        "",
+        request.strip(),
+        flags=re.IGNORECASE,
+    )
+    topic = re.sub(r"^(?:my|our|the)\s+", "", topic, flags=re.IGNORECASE).strip(" .?!")
+    normalized = topic.casefold()
+
+    if not topic:
+        return (
+            "important concepts and key topics from the uploaded notebook",
+            "the key topics in this notebook",
+        )
+    if re.search(r"\b(resume|résumé|cv|curriculum vitae)\b", normalized):
+        return (
+            "resume profile academic projects technical skills education experience",
+            "the key information in your resume",
+        )
+    if re.search(r"\bskills?\b", normalized):
+        return (
+            "technical skills programming languages frontend backend databases AI tools technologies",
+            "technical skills",
+        )
+    if re.search(r"\bacademic projects?\b", normalized):
+        return (
+            "academic projects project titles technologies implementation features",
+            "your academic projects",
+        )
+    return topic, topic
+
+
 def _parse_quiz_response(raw_response: str) -> dict:
     cleaned = raw_response.strip()
 
@@ -133,18 +169,23 @@ def generate_quiz(
     notebook_id: int,
     top_k: int = 5,
 ) -> dict:
+    retrieval_topic, quiz_topic = _quiz_search_scope(topic)
     rag_result = query_rag(
-        question=topic,
+        question=retrieval_topic,
         user_id=user_id,
         notebook_id=notebook_id,
-        top_k=top_k,
+        # Chat commands are broader than the actual learning topic. Retrieve
+        # more candidates and allow a wider distance while preserving notebook
+        # and user filters inside query_rag/vector_store.
+        top_k=max(top_k, 8),
+        distance_threshold=1.0,
     )
 
     results = rag_result["results"]
 
     if not results:
         return {
-            "topic": topic,
+            "topic": quiz_topic,
             "questions": [],
             "message": "I couldn't find enough information in the uploaded sources.",
         }
@@ -162,7 +203,7 @@ Notebook context:
 
 Create a 5-question MCQ quiz about:
 
-{topic}
+{quiz_topic}
 """
 
     raw_quiz = generate_answer(
@@ -173,7 +214,7 @@ Create a 5-question MCQ quiz about:
     quiz = _parse_quiz_response(raw_quiz)
 
     return {
-        "topic": topic,
+        "topic": quiz_topic,
         "quiz": quiz,
         "sources": [
             {
