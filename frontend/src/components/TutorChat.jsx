@@ -403,13 +403,15 @@ function TutorChat({ notebook, studyArtifact, onCloseStudyArtifact }) {
              return updated;
            });
          },
-        (chunk) => setMessages((current) => {
+        (chunk) => {
           streamedContent += chunk;
-          const updated = [...current];
-          const last = updated.length - 1;
-          updated[last] = { ...updated[last], content: updated[last].content + chunk };
-          return updated;
-        }),
+          setMessages((current) => {
+            const updated = [...current];
+            const last = updated.length - 1;
+            updated[last] = { ...updated[last], content: updated[last].content + chunk };
+            return updated;
+          });
+        },
         (sources) => {
           streamedSources = sources;
           setMessages((current) => {
